@@ -1,0 +1,31 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+
+/**
+ * useNetworkStatus
+ *
+ * Detecta cambios de conectividad en tiempo real.
+ * Útil para mostrar banners cuando el usuario pierde conexión en LAN.
+ */
+export function useNetworkStatus() {
+    const [isOnline, setIsOnline] = useState(true);
+
+    useEffect(() => {
+        // Inicializar con el estado actual del navegador
+        setIsOnline(navigator.onLine);
+
+        const handleOnline = () => setIsOnline(true);
+        const handleOffline = () => setIsOnline(false);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
+    return isOnline;
+}
