@@ -9,12 +9,9 @@ import { useState, useEffect } from 'react';
  * Útil para mostrar banners cuando el usuario pierde conexión en LAN.
  */
 export function useNetworkStatus() {
-    const [isOnline, setIsOnline] = useState(true);
+    const [isOnline, setIsOnline] = useState(() => navigator.onLine);
 
     useEffect(() => {
-        // Inicializar con el estado actual del navegador
-        setIsOnline(navigator.onLine);
-
         const handleOnline = () => setIsOnline(true);
         const handleOffline = () => setIsOnline(false);
 

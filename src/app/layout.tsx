@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Outfit } from "next/font/google";
+import ClientProviders from "@/components/ClientProviders";
 import "./globals.css";
 
 /**
@@ -40,9 +41,8 @@ export default function RootLayout({
     return (
         <html lang="es" className={outfit.variable}>
             <body className="font-outfit antialiased">
-                {/* Fondo animado mesh gradient — posición fixed para cubrir siempre */}
                 <div className="mesh-bg" aria-hidden="true" />
-                {children}
+                <ClientProviders>{children}</ClientProviders>
             </body>
         </html>
     );

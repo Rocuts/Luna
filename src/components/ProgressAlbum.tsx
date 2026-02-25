@@ -9,13 +9,8 @@ interface ProgressAlbumProps {
 }
 
 export default function ProgressAlbum({ onClose }: ProgressAlbumProps) {
-    const [logros, setLogros] = useState<Logro[]>([]);
+    const [logros] = useState<Logro[]>(() => loadLearnerProfile()?.logros_desbloqueados ?? []);
     const [speakingId, setSpeakingId] = useState<string | null>(null);
-
-    useEffect(() => {
-        const profile = loadLearnerProfile();
-        setLogros(profile?.logros_desbloqueados ?? []);
-    }, []);
 
     // Cancela cualquier síntesis de voz al cerrar el modal
     useEffect(() => {

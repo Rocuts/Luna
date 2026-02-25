@@ -1,65 +1,78 @@
-# MVP EdTech: "Fricción Cero" (Voice-First)
+# LangLA — Tu Compañero de Inglés
 
-Este proyecto es una Web App (Next.js PWA) orientada a la enseñanza de inglés para hispanohablantes con baja alfabetización digital.
+Web App voice-first (Next.js PWA) para enseñanza de inglés a hispanohablantes con baja alfabetización digital.
 
-## Estructura del Proyecto (Andamiaje)
+## Stack
+
+- **Next.js 16** + React 19 + TypeScript
+- **OpenAI Realtime API** (WebRTC, <300ms latencia)
+- **OpenAI gpt-4o-mini** (reflexión post-sesión)
+- **Serwist** (PWA + offline)
+- **Tailwind CSS** (glass-morphism, paleta Aurora)
+
+## Estructura
 
 ```
-/LangLA
-├── public/
-│   ├── manifest.json       # Configuración PWA
-│   └── sw.js               # Service Worker para resiliencia offline
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx      # Estructura principal y metadatos accesibles
-│   │   ├── page.tsx        # Integración de la UI
-│   │   └── globals.css     # Estilos Tailwind y animaciones base
-│   ├── components/
-│   │   ├── ChatInterface.tsx  # Interfaz principal (Botón central, sin menús)
-│   │   └── CompassionateFallback.tsx # Pantalla de error amigable cuando falla la red
-│   ├── hooks/
-│   │   └── useAudioAgent.ts   # Manejo de Web Audio API, micrófono y supresión de ruido
-│   ├── services/
-│   │   └── realtimeService.ts # Conexión WebRTC con OpenAI Realtime API (Latencia <300ms)
-│   └── utils/
-│       └── a11y.ts         # Utilidades de accesibilidad (ej. lector de pantalla)
-├── package.json
-└── tailwind.config.js      # Paletas de contraste cálidas y accesibles (WCAG AAA)
+src/
+├── app/
+│   ├── api/realtime/route.ts    # Token efímero para WebRTC
+│   ├── api/reflect/route.ts     # Análisis post-sesión con gpt-4o-mini
+│   ├── api/blob/route.ts        # Vercel Blob storage
+│   ├── layout.tsx               # Root layout + ErrorBoundary
+│   ├── page.tsx                 # Onboarding → ChatInterface
+│   ├── ~offline/page.tsx        # Fallback offline
+│   └── globals.css              # Estilos globales + mesh gradient
+├── components/
+│   ├── ChatInterface.tsx        # UI principal (orbe, transcripción, timer)
+│   ├── Onboarding.tsx           # 3 pantallas de bienvenida
+│   ├── SessionSummary.tsx       # Resumen post-sesión (nivel, palabras, logros)
+│   ├── ProgressDashboard.tsx    # Panel de progreso (racha, nivel, vocabulario)
+│   ├── ErrorBoundary.tsx        # Captura de errores empática
+│   └── ClientProviders.tsx      # Wrapper client para ErrorBoundary
+├── hooks/
+│   ├── useAudioAgent.ts         # Web Audio API + micrófono
+│   └── useNetworkStatus.ts      # Detección online/offline
+├── services/
+│   └── realtimeService.ts       # WebRTC + reconexión con token refresh
+├── utils/
+│   ├── memoryEngine.ts          # Perfil, racha, sesiones, logros (localStorage)
+│   └── promptManager.ts         # System prompts para Luna
+├── data/curriculum/
+│   ├── types.ts                 # Tipos del currículum
+│   └── verb-to-be.ts            # Módulo A1: verbo "to be"
+└── middleware.ts                # Rate limiting por IP
 ```
 
-## Características Core
-1. **Fricción Cero**: Un gran botón central multimodal.
-2. **Latencia Ultrabaja**: WebRTC hacia OpenAI Realtime API.
-3. **Manejo Empático**: Si se pierde la conexión, la UI muestra "Dame un segundito..." (sin errores 500).
+## Características
 
-## Ejecutar en LAN
-1. Inicia el proyecto con:
-   ```bash
-   npm run dev
-   ```
-2. Obtén la IP local de tu máquina:
-   ```bash
-   ipconfig getifaddr en0
-   ```
-   Si usas Ethernet, prueba:
-   ```bash
-   ipconfig getifaddr en1
-   ```
-3. Desde otro dispositivo en la misma red Wi-Fi/LAN, abre:
-   ```text
-   https://TU_IP_LOCAL:3000
-   ```
+- **Fricción Cero**: Un gran botón central. Toca para hablar.
+- **Dos modos**: Charla Libre (conversación abierta) y Clase Guiada (3 preguntas estructuradas)
+- **Onboarding**: 3 pantallas para usuarios nuevos
+- **Resumen post-sesión**: Nivel CEFR, vocabulario nuevo, logros desbloqueados
+- **Progreso persistente**: Racha de días, sesiones totales, minutos, vocabulario
+- **Reconexión**: Token refresh automático con exponential backoff
+- **Rate limiting**: Protección contra abuso de API
+- **ErrorBoundary**: Pantalla empática en lugar de crash blanco
+- **PWA**: Instalable, offline graceful, portrait-optimized
+- **Accesibilidad**: ARIA labels, focus-visible, reduced-motion
 
-> Nota importante sobre micrófono:
-> `getUserMedia` solo funciona en contexto seguro. Por eso el script `npm run dev` ahora inicia en HTTPS.
-> - En la misma máquina de desarrollo: usa `https://localhost:3000`.
-> - En LAN desde otro dispositivo: usa `https://TU_IP_LOCAL:3000`.
-> - Al ser certificado autofirmado (modo dev), el navegador puede pedirte confirmar confianza del certificado.
+## Desarrollo
 
-Scripts disponibles:
-- `npm run dev`: Next.js en `0.0.0.0:3000` con HTTPS (acceso LAN).
-- `npm run dev:local`: Next.js solo en `localhost:3000` con HTTPS.
-- `npm run dev:http`: Next.js en `0.0.0.0:3000` por HTTP (solo pruebas sin micrófono en LAN).
-- `npm run dev:http:local`: Next.js solo en `localhost:3000` por HTTP.
-- `npm run start`: App compilada en `0.0.0.0:3000` (acceso LAN).
-- `npm run start:local`: App compilada solo en `localhost:3000`.
+```bash
+cp .env.example .env.local
+# Configura OPENAI_API_KEY en .env.local
+
+npm install
+npm run dev        # HTTPS en 0.0.0.0:3000 (acceso LAN)
+npm run dev:local  # HTTPS solo en localhost:3000
+```
+
+> `getUserMedia` requiere contexto seguro (HTTPS). El script `dev` usa `--experimental-https`.
+
+## Variables de entorno
+
+```bash
+OPENAI_API_KEY=sk-proj-...           # Requerido
+# OPENAI_REALTIME_MODEL=gpt-4o-realtime-preview  # Opcional
+# BLOB_READ_WRITE_TOKEN=...          # Opcional (Vercel Blob)
+```

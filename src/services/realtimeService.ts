@@ -106,6 +106,7 @@ class RealtimeService {
     // Datos necesarios para reconexión automática
     private storedMicStream: MediaStream | null = null;
     private storedToken: string | null = null;
+    private tokenRefreshCallback: (() => Promise<string>) | null = null;
     private maxRetries = 3;
     private currentRetries = 0;
 
@@ -120,6 +121,10 @@ class RealtimeService {
 
     setTranscriptCallback(cb: TranscriptCallback) {
         this.transcriptCallback = cb;
+    }
+
+    setTokenRefreshCallback(cb: () => Promise<string>) {
+        this.tokenRefreshCallback = cb;
     }
 
     // ── Conexión principal ───────────────────────────────────────────────────
@@ -356,15 +361,30 @@ class RealtimeService {
     private handleDisconnection() {
         const canRetry =
             this.currentRetries < this.maxRetries &&
-            this.storedMicStream !== null &&
-            this.storedToken !== null;
+            this.storedMicStream !== null;
 
         if (canRetry) {
             this.currentRetries++;
             this.updateState({ status: 'reconnecting', aiState: 'idle' });
-            // Exponential backoff: 2s, 4s, 8s
             const delay = Math.pow(2, this.currentRetries) * 1000;
-            setTimeout(() => this.connect(this.storedMicStream!, this.storedToken!), delay);
+            setTimeout(async () => {
+                try {
+                    // Pedir token fresco — el anterior ya expiró (~60s)
+                    const freshToken = this.tokenRefreshCallback
+                        ? await this.tokenRefreshCallback()
+                        : this.storedToken;
+                    if (!freshToken || !this.storedMicStream) {
+                        throw new Error('No se pudo renovar la sesión.');
+                    }
+                    await this.connect(this.storedMicStream, freshToken);
+                } catch {
+                    this.updateState({
+                        status: 'disconnected',
+                        aiState: 'idle',
+                        error: new Error('Se perdió la conexión. Toca para intentar de nuevo.'),
+                    });
+                }
+            }, delay);
         } else {
             this.updateState({
                 status: 'disconnected',
