@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAudioAgent } from '../hooks/useAudioAgent';
 import { realtimeService, RealtimeState, TranscriptEntry } from '../services/realtimeService';
+import { getExercise, checkAnswer, getVocabulary, getGrammarTable } from '../services/curriculumTools';
 import {
     loadLearnerProfile,
     saveLearnerProfile,
@@ -293,6 +294,20 @@ export default function ChatInterface() {
         realtimeService.setCallback((state) => { if (mounted) setSessionState(state); });
         realtimeService.setTranscriptCallback((entries) => { if (mounted) setTranscript(entries); });
         realtimeService.setTokenRefreshCallback(getEphemeralToken);
+
+        // ── Registrar tools del currículo para function calling ──────────
+        realtimeService.registerTool('get_exercise', (args) =>
+            JSON.stringify(getExercise(args.topic as string, args.difficulty as number, args.level as string))
+        );
+        realtimeService.registerTool('check_answer', (args) =>
+            JSON.stringify(checkAnswer(args.exercise_id as string, args.user_answer as string))
+        );
+        realtimeService.registerTool('get_vocabulary', (args) =>
+            JSON.stringify(getVocabulary(args.category as string))
+        );
+        realtimeService.registerTool('get_grammar_table', (args) =>
+            JSON.stringify(getGrammarTable(args.concept as string))
+        );
 
         return () => {
             mounted = false;

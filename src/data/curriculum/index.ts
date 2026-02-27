@@ -5,6 +5,9 @@
  */
 
 export { verbToBeCourse } from './verb-to-be';
+export { greetingsCourse } from './greetings';
+export { dailyRoutinesCourse } from './daily-routines';
+export { basicQuestionsCourse } from './basic-questions';
 export type {
     CourseModule,
     Lesson,

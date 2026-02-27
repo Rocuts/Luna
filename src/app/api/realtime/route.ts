@@ -44,10 +44,10 @@ export async function POST(request: NextRequest) {
         );
     }
 
-    const model = process.env.OPENAI_REALTIME_MODEL ?? 'gpt-4o-realtime-preview';
+    const model = process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime-mini';
 
     try {
-        const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
+        const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${apiKey}`,
@@ -61,11 +61,67 @@ export async function POST(request: NextRequest) {
                     model: 'whisper-1',
                 },
                 turn_detection: {
-                    type: 'server_vad',
-                    threshold: 0.5,
-                    prefix_padding_ms: 300,
-                    silence_duration_ms: 600,
+                    type: 'semantic_vad',
+                    eagerness: 'low',
+                    create_response: true,
+                    interrupt_response: true,
                 },
+                input_audio_noise_reduction: {
+                    type: 'far_field',
+                },
+                tools: [
+                    {
+                        type: 'function',
+                        name: 'get_exercise',
+                        description: 'Get a structured exercise from the curriculum for the learner to practice. Use this in tutor mode when presenting exercises instead of making them up.',
+                        parameters: {
+                            type: 'object',
+                            properties: {
+                                topic: { type: 'string', description: 'Grammar or vocabulary topic slug (e.g. "verb-to-be", "greetings", "daily-routines")' },
+                                difficulty: { type: 'integer', minimum: 1, maximum: 3, description: 'Exercise difficulty: 1=easy, 2=medium, 3=hard' },
+                            },
+                            required: ['topic'],
+                        },
+                    },
+                    {
+                        type: 'function',
+                        name: 'check_answer',
+                        description: 'Validate the learner\'s answer to a curriculum exercise. Returns whether it is correct and structured bilingual feedback.',
+                        parameters: {
+                            type: 'object',
+                            properties: {
+                                exercise_id: { type: 'string', description: 'The exercise ID returned by get_exercise' },
+                                user_answer: { type: 'string', description: 'The learner\'s answer to validate' },
+                            },
+                            required: ['exercise_id', 'user_answer'],
+                        },
+                    },
+                    {
+                        type: 'function',
+                        name: 'get_vocabulary',
+                        description: 'Get a vocabulary bank for a specific category to present words in context with examples.',
+                        parameters: {
+                            type: 'object',
+                            properties: {
+                                category: { type: 'string', description: 'Vocabulary category (e.g. "professions", "greetings", "daily activities")' },
+                            },
+                            required: ['category'],
+                        },
+                    },
+                    {
+                        type: 'function',
+                        name: 'get_grammar_table',
+                        description: 'Get a grammar reference table to explain a concept clearly with conjugations and examples.',
+                        parameters: {
+                            type: 'object',
+                            properties: {
+                                concept: { type: 'string', description: 'Grammar concept (e.g. "affirmative", "to be", "present simple")' },
+                            },
+                            required: ['concept'],
+                        },
+                    },
+                ],
+                tool_choice: 'auto',
             }),
         });
 

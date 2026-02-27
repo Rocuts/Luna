@@ -73,14 +73,25 @@ interface OAIErrorEvent extends OAIEventBase {
     error: { message: string; code?: string };
 }
 
+interface OAIFunctionCallDone extends OAIEventBase {
+    type: 'response.function_call_arguments.done';
+    call_id: string;
+    name: string;
+    arguments: string; // JSON string
+}
+
 type OAIServerEvent =
     | OAISessionEvent
     | OAITranscriptionCompleted
     | OAIResponseCreated
     | OAIAudioTranscriptDelta
     | OAIAudioTranscriptDone
+    | OAIFunctionCallDone
     | OAIErrorEvent
     | OAIEventBase;
+
+// Tipo público para registrar tool handlers desde fuera del servicio
+export type ToolHandler = (args: Record<string, unknown>) => string;
 
 // ─── Servicio ──────────────────────────────────────────────────────────────────
 
@@ -113,10 +124,66 @@ class RealtimeService {
     // iOS audio playback: true si el navegador bloqueó el autoplay
     private audioPlaybackBlocked = false;
 
-    // ── Configuración de callbacks ───────────────────────────────────────────
+    // ── Function calling: registro de tool handlers ───────────────────────
+    private toolHandlers: Map<string, ToolHandler> = new Map();
+
+    // ── Anti-eco: referencia a los tracks del micrófono para mute/unmute ───
+    private micTracks: MediaStreamTrack[] = [];
+    private isMicMuted = false;
+
+    // ── Detección de echo loop ────────────────────────────────────────────
+    // Si detectamos respuestas muy rápidas seguidas sin input real del usuario,
+    // es señal de que la IA se está escuchando a sí misma → activar mute como fallback.
+    private responseTimestamps: number[] = [];
+    private echoLoopDetected = false;
+    private static readonly ECHO_LOOP_WINDOW_MS = 8000; // ventana de detección
+    private static readonly ECHO_LOOP_THRESHOLD = 3;    // respuestas en la ventana para activar
+
+    private checkForEchoLoop(): boolean {
+        const now = Date.now();
+        this.responseTimestamps.push(now);
+        // Mantener solo timestamps dentro de la ventana
+        this.responseTimestamps = this.responseTimestamps.filter(
+            (t) => now - t < RealtimeService.ECHO_LOOP_WINDOW_MS
+        );
+        // Si hay demasiadas respuestas rápidas → echo loop
+        if (this.responseTimestamps.length >= RealtimeService.ECHO_LOOP_THRESHOLD) {
+            if (!this.echoLoopDetected) {
+                console.warn('[LangLA] Echo loop detectado — activando mute de micrófono como fallback');
+                this.echoLoopDetected = true;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // ── Anti-eco: mute/unmute del micrófono ─────────────────────────────────
+
+    private muteMic() {
+        if (this.isMicMuted) return;
+        this.micTracks.forEach((t) => { t.enabled = false; });
+        this.isMicMuted = true;
+        this.sendEvent({ type: 'input_audio_buffer.clear' });
+    }
+
+    private unmuteMic() {
+        if (!this.isMicMuted) return;
+        this.micTracks.forEach((t) => { t.enabled = true; });
+        this.isMicMuted = false;
+    }
+
+    // ── Configuración de callbacks y tools ───────────────────────────────────
 
     setCallback(cb: RealtimeCallback) {
         this.stateCallback = cb;
+    }
+
+    /**
+     * Registra un handler para un tool que Luna puede llamar durante la conversación.
+     * El handler recibe los argumentos parseados y devuelve un JSON string con el resultado.
+     */
+    registerTool(name: string, handler: ToolHandler) {
+        this.toolHandlers.set(name, handler);
     }
 
     setTranscriptCallback(cb: TranscriptCallback) {
@@ -160,6 +227,8 @@ class RealtimeService {
             };
 
             // ── Audio de entrada: micrófono → OpenAI ────────────────────────
+            this.micTracks = micStream.getAudioTracks();
+            this.isMicMuted = false;
             micStream.getTracks().forEach((track) => {
                 this.peerConnection!.addTrack(track, micStream);
             });
@@ -189,9 +258,8 @@ class RealtimeService {
             const offer = await this.peerConnection.createOffer();
             await this.peerConnection.setLocalDescription(offer);
 
-            const model = 'gpt-4o-realtime-preview';
             const sdpResponse = await fetch(
-                `https://api.openai.com/v1/realtime?model=${model}`,
+                'https://api.openai.com/v1/realtime/calls',
                 {
                     method: 'POST',
                     body: offer.sdp,
@@ -222,9 +290,23 @@ class RealtimeService {
     // ── Configuración de sesión vía data channel ─────────────────────────────
 
     private onDataChannelOpen() {
-        // El modelo y las instrucciones ya se configuraron en /api/realtime.
-        // Aquí podemos sobreescribir la detección de voz si queremos.
-        // (Normalmente no es necesario si la configuración de sesión ya es correcta.)
+        // Sobreescribir la configuración de sesión con semantic_vad y reducción de ruido.
+        // Esto complementa la config de /api/realtime con parámetros que solo
+        // se pueden ajustar después de que el data channel esté abierto.
+        this.sendEvent({
+            type: 'session.update',
+            session: {
+                turn_detection: {
+                    type: 'semantic_vad',
+                    eagerness: 'low',
+                    create_response: true,
+                    interrupt_response: true,
+                },
+                input_audio_noise_reduction: {
+                    type: 'far_field',
+                },
+            },
+        });
     }
 
     private sendEvent(event: object) {
@@ -266,6 +348,9 @@ class RealtimeService {
                 const e = data as OAITranscriptionCompleted;
                 const userText = e.transcript?.trim();
                 if (userText) {
+                    // Transcripción real del usuario → resetear detección de echo loop
+                    this.responseTimestamps = [];
+                    this.echoLoopDetected = false;
                     const entryId = e.item_id || `user-${Date.now()}`;
                     const existing = this.transcript.findIndex((t) => t.id === entryId);
                     if (existing >= 0) {
@@ -296,6 +381,12 @@ class RealtimeService {
                 const e = data as OAIResponseCreated;
                 this.currentResponseId = e.response?.id ?? `resp-${Date.now()}`;
                 this.partialAssistantText = '';
+                // Solo mutear si detectamos un echo loop (respuestas rápidas sin input real).
+                // En condiciones normales, el WebRTC AEC + semantic_vad + far_field noise
+                // reduction son suficientes y permiten barge-in (interrupciones del usuario).
+                if (this.checkForEchoLoop()) {
+                    this.muteMic();
+                }
                 this.updateState({ aiState: 'thinking' });
                 break;
             }
@@ -340,10 +431,59 @@ class RealtimeService {
                 break;
             }
 
-            // La IA terminó de hablar → vuelve a escuchar
+            // La IA terminó de hablar → reactivar micrófono y volver a escuchar
             case 'response.done':
+                if (this.isMicMuted) {
+                    this.unmuteMic();
+                }
                 this.updateState({ aiState: 'listening' });
                 break;
+
+            // Function calling: Luna quiere ejecutar un tool del currículo
+            case 'response.function_call_arguments.done': {
+                const e = data as OAIFunctionCallDone;
+                const handler = this.toolHandlers.get(e.name);
+                if (handler) {
+                    try {
+                        const args = JSON.parse(e.arguments) as Record<string, unknown>;
+                        const result = handler(args);
+                        // Enviar el resultado de vuelta a Luna
+                        this.sendEvent({
+                            type: 'conversation.item.create',
+                            item: {
+                                type: 'function_call_output',
+                                call_id: e.call_id,
+                                output: result,
+                            },
+                        });
+                        // Pedir a Luna que continúe hablando con el resultado
+                        this.sendEvent({ type: 'response.create' });
+                    } catch (err) {
+                        console.error(`[LangLA] Error ejecutando tool "${e.name}":`, err);
+                        this.sendEvent({
+                            type: 'conversation.item.create',
+                            item: {
+                                type: 'function_call_output',
+                                call_id: e.call_id,
+                                output: JSON.stringify({ error: 'Tool execution failed' }),
+                            },
+                        });
+                        this.sendEvent({ type: 'response.create' });
+                    }
+                } else {
+                    console.warn(`[LangLA] Tool no registrado: "${e.name}"`);
+                    this.sendEvent({
+                        type: 'conversation.item.create',
+                        item: {
+                            type: 'function_call_output',
+                            call_id: e.call_id,
+                            output: JSON.stringify({ error: `Tool "${e.name}" not found` }),
+                        },
+                    });
+                    this.sendEvent({ type: 'response.create' });
+                }
+                break;
+            }
 
             // Error del servidor
             case 'error': {
@@ -403,6 +543,10 @@ class RealtimeService {
         this.transcript = [];
         this.partialAssistantText = '';
         this.currentResponseId = null;
+        this.micTracks = [];
+        this.isMicMuted = false;
+        this.responseTimestamps = [];
+        this.echoLoopDetected = false;
 
         this.dataChannel?.close();
         this.peerConnection?.close();
@@ -418,6 +562,17 @@ class RealtimeService {
 
         this.updateState({ status: 'disconnected', aiState: 'idle', error: null });
         this.transcriptCallback?.([]);
+    }
+
+    /**
+     * Actualiza las instrucciones de Luna mid-sesión via session.update.
+     * Útil para adaptar la dificultad o el enfoque pedagógico dinámicamente.
+     */
+    updateSessionInstructions(instructions: string) {
+        this.sendEvent({
+            type: 'session.update',
+            session: { instructions },
+        });
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
